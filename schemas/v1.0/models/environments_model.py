@@ -13,7 +13,7 @@ class EnvBlock(BaseModel):
     )
     firebase_project: str | None = Field(
         None,
-        description='Firebase project ID (e.g., glam-styln-dev). Identical to gcp_project when the project is Firebase-managed.',
+        description='Firebase project ID (e.g., your-app-dev). Identical to gcp_project when the project is Firebase-managed.',
     )
     gcp_project: str | None = Field(
         None,
