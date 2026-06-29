@@ -5,6 +5,127 @@ canonical history lives in `agent-conventions` itself; entries here record what
 landed in the DontPanic subtree first (and that the operator subsequently
 pushed upstream out-of-band).
 
+## 1.15.0 — 2026-06-28
+
+### Added
+- `objective_contract.schema.json` + `models/objective_contract_model.py`: a
+  typed `delivers[]` block (`audience` / `kind` / `capability` / `proof_refs`)
+  encoding audience-first plan outcomes — *what becomes true, for whom, what
+  kind of capability, and which features prove it*. `audience` and `kind` are
+  closed enums; `proof_refs` are typed feature references (`{type:'feature',
+  id:'F014'[, plan:'<plan-id>']}`) rather than overloaded path strings, so proof
+  can't drift from `features.json`.
+- `plan.schema.json` + `models/plan_model.py`: optional plan-authoring
+  `schema_version` (`^\d+\.\d+$`), independent of this package VERSION. Absent /
+  `1.0` = grandfathered.
+
+### Changed
+- `objective_contract` `goal_type` enum expanded from the original four
+  (parity/new_feature/migration/incident) to the full Plan goal_type set
+  (+ mechanical/infra/refactor), and `user_journeys` is now OPTIONAL — together
+  these enable a "lite universal contract" (delivers-only, no journeys) for
+  infra/refactor/mechanical plans.
+- `validate.py`: at plan `schema_version >= 1.1`, a SUBSTANTIVE plan
+  (tier != trivial) must declare an objective contract carrying a non-empty
+  `delivers[]`; below 1.1 the check is advisory (inline ⚠, never a failure).
+  Strictly additive — every plan that validated under 1.0 still validates, and
+  no existing plan declares 1.1.
+
+### Motivation
+Plan reporting defaulted to internal topology (F-ids, phases, verdicts) instead
+of answering the builder's first question: *after this succeeds, what can a
+human or agent safely do that they couldn't before?* The reporting contract
+(plan-artifacts SKILL.md) fixes the prose; `delivers[]` gives future plans an
+outcome-bearing artifact so the summary can be a projection of the contract
+rather than a parallel story that drifts.
+
+## 1.14.0 — 2026-06-21
+
+### Added
+- `upgrade-releases.schema.json` + `models/upgrade_releases_model.py`
+  (`UpgradeManifest`, `UpgradeRelease`, `UpgradeAction`, `UpgradeCommand`): the
+  release-manifest contract for the upgrade-readiness layer in `dontpanic
+  doctor` (plan `2026-06-21-001-feat-upgrade-readiness-doctor` F001). A manifest
+  carries a top-level baseline (`baseline_release` + `baseline_date`, D018) and
+  an ordered `releases[]` list. Each release declares required/advisory operator
+  actions with closed enums (`kind`, `severity`, command `label`), an ORDERED
+  `commands[]` checklist (preview→apply→verify→run, D017), and the
+  UX-critical per-action fields (`applies_when`, `status_probe`,
+  `success_message`, `failure_message`, `human_next_step`, `docs_url`,
+  `introduced_commands`). The schema is closed (unknown keys/enums rejected).
+- Cross-field invariants live in the Pydantic model (not expressible in plain
+  JSON Schema): required-action probe (D021), required-command apply (D029),
+  ordered apply+verify checklist (D036), id-uniqueness (D030), and non-blank
+  command strings (D047).
+
+### Motivation
+The manifest — not the prose CHANGELOG, not the plan ledger (D002) — is the
+single machine source of truth for upgrade intent. The consumer-side loader
+(`dontpanic_orchestrate/release_manifest.py`) resolves
+`docs/upgrade/releases.json` as a package-relative resource (D045) so it loads
+outside the repo root and off-git.
+
+## 1.12.0 — 2026-05-22
+
+### Added
+- `plan.schema.json`: optional `requires_capabilities[]` array on the plan
+  frontmatter. Items are strings matching the capability id pattern
+  `^[a-z0-9][a-z0-9-]*$` with `uniqueItems: true`. The field is NOT in the
+  schema's `required` array — plans without it continue to validate
+  unchanged.
+- `models/plan_model.py`: matching `Plan.requires_capabilities: list[constr(...)] | None`
+  field with the same pattern so the Pydantic mirror stays in lockstep.
+
+### Motivation
+DontPanic plan `2026-05-22-002-feat-capability-status-v0` F003 introduces a
+lock-time advisory sidecar. `dontpanic plan lock` validates every
+`requires_capabilities[]` entry against the manifest registry (unknown id
+fails loud with a closest-match suggestion) and emits
+`evidence/required-capabilities.json` summarizing per-capability readiness.
+The sidecar is advisory — lock proceeds even when bound capabilities are
+not ready, so a plan can ship the binding without gating implementation on
+operator setup completion.
+
+### Notes
+- Strictly additive: every plan that validated under v1.11.0 continues to
+  validate under v1.12.0.
+- DontPanic-side change first. Operator cherry-picks into
+  `agent-conventions`, tags `v1.12.0`, and pushes the subtree separately.
+
+## 1.11.0 — 2026-05-22
+
+### Added
+- `capability.schema.json`: optional `setup_steps[]` array field on the
+  capability manifest. Each entry is `{id, what, automatable,
+  command_template?, verify_probe?, human_required_reason?}`. `id` follows
+  the `^[a-z0-9][a-z0-9_-]*$` pattern; `command_template`, `verify_probe`,
+  and `human_required_reason` accept `string | null`. The field is NOT in
+  the schema's `required` array — manifests without it continue to validate
+  unchanged.
+- `capability.schema.json`: `setup_steps[]` declares a non-standard
+  `uniqueBy: "id"` keyword in addition to standard `uniqueItems: true`. The
+  reference loader (`dontpanic_orchestrate.capabilities`) registers a
+  matching custom validator on `Draft202012Validator` so two entries
+  sharing the same `id` (but differing in other fields, which `uniqueItems`
+  does NOT catch) are rejected at the schema-validation step. Generic JSON
+  Schema validators will ignore the keyword as an unknown annotation —
+  consumers that need cross-item id-uniqueness must either reuse the
+  reference loader or implement the same check.
+
+### Motivation
+DontPanic plan `2026-05-22-002-feat-capability-status-v0` F001 introduces a
+machine-readable setup-step list so the forthcoming `dontpanic capabilities
+status` CLI (F002) can render automatable vs. human-required next actions.
+The change is strictly additive: the `schema_version` const stays `1.0.0`
+because every manifest validated under v1.10.0 still validates under v1.11.0.
+
+### Notes
+- Backward compatible: existing four checked-in manifests (without
+  `setup_steps`) continue to load with no test changes; `CapabilityManifest`
+  defaults the field to an empty tuple.
+- DontPanic-side change first. Operator cherry-picks into
+  `agent-conventions`, tags `v1.11.0`, and pushes the subtree separately.
+
 ## 1.9.1 — 2026-05-19
 
 ### Changed
