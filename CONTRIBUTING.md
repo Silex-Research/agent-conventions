@@ -10,7 +10,11 @@ Run before opening a PR:
 ```bash
 python3 scripts/test_validator_dispatch.py
 python3 scripts/test_objective_contract.py
+python3 scripts/test_user_impact_contract.py
 ```
+
+CI runs the same list in `.github/workflows/validate.yml`; keep the two in step
+when you add a check.
 
 If you change a schema, update the matching generated Pydantic model in
 `schemas/v1.0/models/` and add a changelog entry.
