@@ -402,6 +402,7 @@ class Feature(BaseModel):
         return self
 
 
+
 class Features(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -409,3 +410,57 @@ class Features(BaseModel):
     task_id: str = Field(..., description='Parent plan ID')
     schema_version: Literal['1.0']
     features: list[Feature] = Field(..., min_length=1)
+
+
+# ── evidence on `passes: true` (D008) ───────────────────────────────────────
+#
+# `features.schema.json` has always required verified_by + verified_at +
+# non-empty evidence_refs when passes is true. The Pydantic arm did not, so an
+# unbacked flip validated clean fleet-wide.
+#
+# This lives as a FUNCTION rather than a raising @model_validator, and the
+# distinction is load-bearing. The model is the READ path: plan_loader.load()
+# calls Features.model_validate. When the rule raised there, 39 checked-in
+# plans became unreadable and every fleet-walking surface either crashed or
+# silently dropped them — planning_readiness.analyze_repo returns an empty set,
+# so features vanish from "what can I dispatch" with no signal at all.
+#
+# History predates the rule, and backfilling does not solve the class: the next
+# schema tightening breaks the reader again. So enforcement belongs where a
+# claim is asserted, not where it is read. validate.py calls this, which keeps
+# the gap closed for `dontpanic doctor`, CI, and plan-lock alike.
+
+_EVIDENCE_FIELDS = ("verified_by", "verified_at", "evidence_refs")
+
+
+def evidence_gaps(feature) -> list[str]:
+    """Return the evidence fields a `passes: true` feature fails to supply.
+
+    Empty list means "backed" (or `passes` is false — an open feature is not
+    asked to justify itself). Accepts a dict or a parsed ``Feature``.
+    """
+    get = feature.get if isinstance(feature, dict) else lambda k, d=None: getattr(feature, k, d)
+    if not get("passes"):
+        return []
+    missing = []
+    for field in _EVIDENCE_FIELDS:
+        value = get(field)
+        # An empty list is not a citation — the JSON Schema says minItems 1.
+        if value is None or (isinstance(value, (list, tuple)) and not value):
+            missing.append(field)
+    if not missing:
+        return []
+    fid = get("id") or "?"
+    return [
+        f"feature {fid} claims passes=true but is missing {', '.join(missing)} — "
+        "a flip to true must name who verified it, when, and at least one "
+        "evidence_ref. An empty list is not evidence."
+    ]
+
+
+def evidence_gaps_for_document(data: dict) -> list[str]:
+    """All evidence gaps across a features.json payload, in file order."""
+    gaps: list[str] = []
+    for feature in (data or {}).get("features") or []:
+        gaps.extend(evidence_gaps(feature))
+    return gaps
